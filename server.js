@@ -27,7 +27,17 @@ app.get(
       );
       const doc = await response.text();
       const $ = cheerio.load(doc);
-      const iframe = $('iframe').first().prop('outerHTML');
+      $('script').remove();
+      const $iframe = $('iframe').first();
+  
+      // Remove all inline event attributes (like onclick, onload, etc.)
+      $iframe.get(0).attribs = Object.fromEntries(
+        Object.entries($iframe.get(0).attribs).filter(
+          ([key]) => !key.startsWith('on')
+        )
+      );
+  
+      const iframe = $.html($iframe);
       if (iframe) {
         res.send(`
               ${iframe}
