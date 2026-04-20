@@ -2,15 +2,36 @@ import express from 'express';
 import * as cheerio from 'cheerio';
 
 import cors from 'cors';
-
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 import fetch from 'node-fetch';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const app = express();
+const port = Number(process.env.PORT) || 3000;
+
+app.use(cors());
+
+const getSanitizedIframeHtml = (doc) => {
+  const $ = cheerio.load(doc);
+  $('script').remove();
+
+  const $iframe = $('iframe').first();
+  const iframeElement = $iframe.get(0);
+
+  if (!iframeElement?.attribs) {
+    return null;
+  }
+
+  iframeElement.attribs = Object.fromEntries(
+    Object.entries(iframeElement.attribs).filter(
+      ([key]) => !key.startsWith('on')
+    )
+  );
+
+  return $.html($iframe);
+};
+
+app.get('/api/video/wakeup', (_req, res) => {
+  res.json({ ok: true });
+});
 
 app.get(
   '/api/video/tv/:series_id/:season_number/:episode_number',
@@ -26,18 +47,8 @@ app.get(
         }
       );
       const doc = await response.text();
-      const $ = cheerio.load(doc);
-      $('script').remove();
-      const $iframe = $('iframe').first();
-  
-      // Remove all inline event attributes (like onclick, onload, etc.)
-      $iframe.get(0).attribs = Object.fromEntries(
-        Object.entries($iframe.get(0).attribs).filter(
-          ([key]) => !key.startsWith('on')
-        )
-      );
-  
-      const iframe = $.html($iframe);
+      const iframe = getSanitizedIframeHtml(doc);
+
       if (iframe) {
         res.send(`
               ${iframe}
@@ -47,7 +58,7 @@ app.get(
       }
     } catch (err) {
       console.log(err);
-      res.status(500).json({ error: 'Something went wrong' });
+      res.status(500).json({ error: err.message });
     }
   }
 );
@@ -221,26 +232,16 @@ app.get('/api/video/movie/:movie_id', async (req, res) => {
         `https://vidsrc.xyz/embed/movie/${movie_id}`,
         {
           method: 'GET',
-        }
+      }
       );
       doc = await response.text();
     } catch (err) {
       console.log(err);
-      res.json({ error: 'Something went wrong' });
+      res.status(502).json({ error: 'Unable to fetch movie embed' });
+      return;
     }
 
-    const $ = cheerio.load(doc);
-    $('script').remove();
-    const $iframe = $('iframe').first();
-
-    // Remove all inline event attributes (like onclick, onload, etc.)
-    $iframe.get(0).attribs = Object.fromEntries(
-      Object.entries($iframe.get(0).attribs).filter(
-        ([key]) => !key.startsWith('on')
-      )
-    );
-
-    const iframe = $.html($iframe);
+    const iframe = getSanitizedIframeHtml(doc);
 
     if (iframe) {
       res.send(`
@@ -307,6 +308,6 @@ app.get('/api/video/movie/:movie_id', async (req, res) => {
 //   }
 // });
 
-app.listen(3000, () => {
-  console.log('Server is running on port 3000');
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
 });
