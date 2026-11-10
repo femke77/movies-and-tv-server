@@ -33,6 +33,56 @@ app.get('/api/video/wakeup', (_req, res) => {
   res.json({ ok: true });
 });
 
+// Server 10: equivalent of SuperEmbed's se_player.php resolver, implemented
+// in Node so it can run behind this project's Nginx + Express deployment.
+app.get('/api/video/multiembed', async (req, res) => {
+  const { video_id, tmdb = '1', s, e } = req.query;
+  const validId = typeof video_id === 'string' && /^[a-zA-Z0-9]+$/.test(video_id);
+  const validEpisodeParams =
+    (s === undefined || (typeof s === 'string' && /^\d+$/.test(s))) &&
+    (e === undefined || (typeof e === 'string' && /^\d+$/.test(e)));
+
+  if (!validId || !validEpisodeParams || !['0', '1'].includes(String(tmdb))) {
+    return res.status(400).send('Invalid MultiEmbed request');
+  }
+
+  const resolverUrl = new URL('https://getsuperembed.link/');
+  resolverUrl.search = new URLSearchParams({
+    video_id,
+    tmdb: String(tmdb),
+    season: s ?? '0',
+    episode: e ?? '0',
+    player_font: 'Poppins',
+    player_bg_color: '000000',
+    player_font_color: 'ffffff',
+    player_primary_color: '34cfeb',
+    player_secondary_color: '6900e0',
+    player_loader: '1',
+    preferred_server: '0',
+    player_sources_toggle_type: '2',
+  }).toString();
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+
+  try {
+    const response = await fetch(resolverUrl.href, { signal: controller.signal });
+    const playerUrl = (await response.text()).trim();
+    const parsedPlayerUrl = new URL(playerUrl);
+
+    if (!response.ok || parsedPlayerUrl.protocol !== 'https:') {
+      return res.status(502).send('MultiEmbed player is unavailable');
+    }
+
+    return res.redirect(302, parsedPlayerUrl.href);
+  } catch (err) {
+    console.error('MultiEmbed resolver failed:', err);
+    return res.status(502).send('MultiEmbed player is unavailable');
+  } finally {
+    clearTimeout(timeout);
+  }
+});
+
 app.get(
   '/api/video/tv/:series_id/:season_number/:episode_number',
   async (req, res) => {
