@@ -9,6 +9,52 @@ const port = Number(process.env.PORT) || 3000;
 
 app.use(cors());
 
+// Browser-only failures (React routes, lazy imports, uncaught errors) are
+// reported here so they appear in PM2 logs alongside server errors.
+const clientErrorCounts = new Map();
+app.post('/api/client-errors', express.json({ limit: '8kb' }), (req, res) => {
+  const origin = req.get('origin');
+  let originHost;
+  try {
+    originHost = origin ? new URL(origin).host : undefined;
+  } catch {
+    return res.sendStatus(403);
+  }
+  if (originHost && originHost !== req.get('host')) {
+    return res.sendStatus(403);
+  }
+  const { id, time, kind, version, path, name, message, stack } = req.body ?? {};
+  if (
+    !['route', 'window', 'promise', 'preload'].includes(kind) ||
+    typeof message !== 'string' || !message || message.length > 1000 ||
+    typeof path !== 'string' || !path.startsWith('/') || path.length > 300
+  ) {
+    return res.sendStatus(400);
+  }
+  const client = req.ip;
+  const now = Date.now();
+  const count = clientErrorCounts.get(client) ?? { start: now, total: 0 };
+  if (now - count.start > 60_000) {
+    count.start = now;
+    count.total = 0;
+  }
+  if (++count.total > 20) return res.sendStatus(429);
+  clientErrorCounts.set(client, count);
+  if (clientErrorCounts.size > 1000) clientErrorCounts.clear();
+
+  console.error('[client-error]', JSON.stringify({
+    id: typeof id === 'string' ? id.slice(0, 100) : '',
+    time: typeof time === 'string' ? time.slice(0, 40) : '',
+    kind,
+    version: typeof version === 'string' ? version.slice(0, 100) : '',
+    path,
+    name: typeof name === 'string' ? name.slice(0, 80) : '',
+    message,
+    stack: typeof stack === 'string' ? stack.slice(0, 3000) : '',
+  }));
+  return res.sendStatus(204);
+});
+
 const getSanitizedIframeHtml = (doc) => {
   const $ = cheerio.load(doc);
   $('script').remove();
